@@ -56,6 +56,7 @@ wscat -c ws://localhost:8080/ws
 # 发送剪贴板更新
 {"type":"clipboard_update","payload":{"content_type":"text","data":"Hello from CLI","sender_device_id":"device1"}}
 ```
+更多客户端实现示例请参考： [RustSyncCV-Client](https://github.com/Dr1mH4X/RustSyncCV-Client)
 
 ## 开发与部署
 
@@ -70,3 +71,7 @@ cargo test
 ## 许可证
 
 MIT
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Dr1mH4X/RustSyncCV-Client&type=Date)](https://www.star-history.com/#Dr1mH4X/RustSyncCV-Client&Date)
