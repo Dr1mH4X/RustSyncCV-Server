@@ -94,7 +94,7 @@ cargo test
 
 ## 许可证
 
-MIT
+本项目基于 MIT 许可证，详情见 [LICENSE](LICENSE)。
 
 ## Star History
 
