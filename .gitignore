@@ -3,7 +3,6 @@
 **/*.rs.bk
 **/*.rlib
 **/*.rmeta
-Cargo.lock
 
 # Binaries
 *.exe
