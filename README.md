@@ -171,7 +171,7 @@ docker run --rm -e RUST_LOG=debug -p 8080:8080 rustsynccv-server:latest
 
 ### 8. 配置与数据持久化示例
 
-#### 方式一：主机路径挂载（适合本地开发）
+#### 主机路径挂载
 
 ```powershell
 # 假设当前目录包含 config.toml 与 users.toml
@@ -182,32 +182,6 @@ docker run --name rustsynccv `
     -v ${PWD}/certs:/app/certs `
     rustsynccv-server:latest
 ```
-
-#### 方式二：命名卷（适合长期运行）
-
-先初始化卷并复制默认文件：
-```powershell
-docker volume create rustsynccv_config
-docker run --rm -v rustsynccv_config:/data busybox sh -c "mkdir -p /data && echo 'address = \"0.0.0.0\"\nport = 8080\ntls_cert = \"certs/server.pem\"\ntls_key = \"certs/server.key\"' > /data/config.toml && echo '[[users]]\nusername = \"test\"\npassword = \"test\"' > /data/users.toml"
-```
-
-运行容器并挂载卷：
-```powershell
-docker run -d --name rustsynccv `
-    -p 8080:8080 `
-    -v rustsynccv_config:/app `
-    rustsynccv-server:latest
-```
-
-你可以进入卷修改配置：
-```powershell
-docker run --rm -it -v rustsynccv_config:/data busybox sh
-# vi /data/users.toml 或 sed 编辑
-```
-
-#### 方式三：Kubernetes ConfigMap / Secret（拓展）
-
-在 K8s 场景中，可将 `config.toml` 作为 ConfigMap，证书作为 Secret 挂载到 `/app` 路径，保持与容器内目录结构一致。
 
 ## Star History
 
