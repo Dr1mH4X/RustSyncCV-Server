@@ -96,6 +96,119 @@ cargo test
 
 本项目基于 MIT 许可证，详情见 [LICENSE](LICENSE)。
 
+## Docker 构建与运行
+
+项目提供多阶段 Docker 构建，运行镜像体积精简。
+
+### 1. 构建镜像
+
+```powershell
+docker build -t rustsynccv-server:latest .
+```
+
+### 2. 运行容器
+
+```powershell
+# 默认使用镜像内置 config.toml / users.toml
+docker run --rm -p 8080:8080 rustsynccv-server:latest
+
+# 挂载本地配置（推荐）
+docker run --rm -p 8080:8080 `
+    -v ${PWD}/config.toml:/app/config.toml `
+    -v ${PWD}/users.toml:/app/users.toml `
+    rustsynccv-server:latest
+```
+
+### 3. 推送到镜像仓库（Docker Hub 示例）
+
+```powershell
+$env:IMAGE_NAME="yourname/rustsynccv-server"
+docker tag rustsynccv-server:latest $env:IMAGE_NAME:latest
+docker login
+docker push $env:IMAGE_NAME:latest
+```
+
+### 4. 多架构构建 (amd64 + arm64)
+
+```powershell
+docker buildx create --use --name multi || docker buildx use multi
+docker buildx build --platform linux/amd64,linux/arm64 `
+    -t yourname/rustsynccv-server:latest `
+    --push .
+```
+
+### 5. 使用自定义证书启用 WSS
+
+假设你有 `certs/server.pem` 与 `certs/server.key`，并在 `config.toml` 中配置：
+
+```toml
+tls_cert = "certs/server.pem"
+tls_key = "certs/server.key"
+```
+
+运行时挂载：
+
+```powershell
+docker run --rm -p 8080:8080 `
+    -v ${PWD}/config.toml:/app/config.toml `
+    -v ${PWD}/users.toml:/app/users.toml `
+    -v ${PWD}/certs:/app/certs `
+    rustsynccv-server:latest
+```
+
+### 6. 调整日志级别
+
+```powershell
+docker run --rm -e RUST_LOG=debug -p 8080:8080 rustsynccv-server:latest
+```
+
+### 7. 常见问题
+
+- 用户列表更新：更新 `users.toml` 后重启容器即可，无需重建镜像。
+- config 修改：修改端口或证书路径后需同步更新容器挂载。
+- 无证书运行：若证书文件不存在，自动回退到 HTTP/WS。
+- 健康检查：可添加 `--health-cmd` 自定义 HTTP/TCP 探测。
+
+### 8. 配置与数据持久化示例
+
+#### 方式一：主机路径挂载（适合本地开发）
+
+```powershell
+# 假设当前目录包含 config.toml 与 users.toml
+docker run --name rustsynccv `
+    -p 8080:8080 `
+    -v ${PWD}/config.toml:/app/config.toml `
+    -v ${PWD}/users.toml:/app/users.toml `
+    -v ${PWD}/certs:/app/certs `
+    rustsynccv-server:latest
+```
+
+#### 方式二：命名卷（适合长期运行）
+
+先初始化卷并复制默认文件：
+```powershell
+docker volume create rustsynccv_config
+docker run --rm -v rustsynccv_config:/data busybox sh -c "mkdir -p /data && echo 'address = \"0.0.0.0\"\nport = 8080\ntls_cert = \"certs/server.pem\"\ntls_key = \"certs/server.key\"' > /data/config.toml && echo '[[users]]\nusername = \"test\"\npassword = \"test\"' > /data/users.toml"
+```
+
+运行容器并挂载卷：
+```powershell
+docker run -d --name rustsynccv `
+    -p 8080:8080 `
+    -v rustsynccv_config:/app `
+    rustsynccv-server:latest
+```
+
+你可以进入卷修改配置：
+```powershell
+docker run --rm -it -v rustsynccv_config:/data busybox sh
+# vi /data/users.toml 或 sed 编辑
+```
+
+#### 方式三：Kubernetes ConfigMap / Secret（拓展）
+
+在 K8s 场景中，可将 `config.toml` 作为 ConfigMap，证书作为 Secret 挂载到 `/app` 路径，保持与容器内目录结构一致。
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Dr1mH4X/RustSyncCV-Client,Dr1mH4X/RustSyncCV-Server&type=Date)](https://www.star-history.com/#Dr1mH4X/RustSyncCV-Client&Dr1mH4X/RustSyncCV-Server&Date)
