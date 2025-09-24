@@ -9,6 +9,7 @@ RustSyncCV-Server 是基于 Rust、Axum 和 WebSocket 构建的剪贴板同步�
 - 剪贴板广播：将某用户在一个设备上的剪贴板更新广播给该用户的其他设备
 - 状态管理：服务端保存每位用户的最新剪贴板状态
 - TLS 支持：当提供有效的 `.pem` 和 `.key` 文件时，使用 HTTPS/WSS；否则降级为 HTTP/WS
+- 多用户支持：支持多个用户账户，每个用户的剪贴板独立同步，用户之间数据互不干扰
 - 调试日志：记录连接、认证、消息解析、剪贴板预览和广播等信息
 
 ## 配置
@@ -25,10 +26,9 @@ tls_key = "certs/server.key"
 在项目根目录放置 `users.toml`，格式如下：
 
 ```toml
-[john]
-password = "password123"
-
-test = { password = "test" }
+[[users]]
+username = "testuser"
+password = "testpass"
 ```
 
 ## 快速开始
