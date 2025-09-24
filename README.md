@@ -44,6 +44,30 @@ cargo run
 
 默认监听 `config.toml` 中配置的地址和端口。
 
+## 反向代理
+
+在生产环境中，通常需要通过反向代理（如 Nginx）将外部 WebSocket 请求转发到内部服务。以下是 Nginx 示例配置：
+
+```nginx
+server {
+    listen 80;
+    server_name example.com;
+
+    location /ws/ {
+        proxy_pass         http://127.0.0.1:8067;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Connection "Upgrade";
+        proxy_set_header   Host $host;
+        # 可选：WebSocket 心跳和超时配置
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+}
+```
+
+修改 `server_name`、`proxy_pass` 等字段以匹配实际环境。
+
 ## 客户端示例
 
 使用 `wscat`（或类似工具）测试：
