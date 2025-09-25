@@ -55,25 +55,42 @@ async fn main() {
         .route("/ws", get(ws_handler))
         .with_state(app_state.clone());
 
-    // TLS配置（如果证书文件不存在，则使用HTTP）
+    // TLS配置（如果证书加载失败或不存在，则回退到HTTP），并输出详细日志
     let addr = format!("{}:{}", settings.address, settings.port);
-    if std::path::Path::new(&settings.tls_cert).exists() && std::path::Path::new(&settings.tls_key).exists() {
-        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-            &settings.tls_cert,
-            &settings.tls_key,
-        ).await.unwrap();
+    let cert_path = settings.tls_cert.clone();
+    let key_path = settings.tls_key.clone();
+    let cert_exists = std::path::Path::new(&cert_path).exists();
+    let key_exists = std::path::Path::new(&key_path).exists();
 
-        axum_server::bind_rustls(addr.parse().unwrap(), tls_config)
-            .serve(app.into_make_service())
-            .await
-            .unwrap();
+    if cert_exists && key_exists {
+        tracing::info!(cert = %cert_path, key = %key_path, "TLS: trying to load cert and key");
+        match axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path).await {
+            Ok(tls_config) => {
+                tracing::info!("TLS enabled on {}", addr);
+                axum_server::bind_rustls(addr.parse().unwrap(), tls_config)
+                    .serve(app.into_make_service())
+                    .await
+                    .unwrap();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, cert = %cert_path, key = %key_path, "TLS load failed; falling back to HTTP");
+            }
+        }
     } else {
-        println!("TLS certificates not found, starting HTTP server on {}", addr);
-        axum_server::bind(addr.parse().unwrap())
-            .serve(app.into_make_service())
-            .await
-            .unwrap();
+        if !cert_exists {
+            tracing::warn!(cert = %cert_path, "TLS certificate file not found");
+        }
+        if !key_exists {
+            tracing::warn!(key = %key_path, "TLS private key file not found");
+        }
+        tracing::warn!("TLS certificates not found, starting HTTP server on {}", addr);
     }
+
+    axum_server::bind(addr.parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
 
 struct AppState {

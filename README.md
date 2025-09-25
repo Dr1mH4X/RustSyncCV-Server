@@ -96,48 +96,7 @@ cargo test
 
 本项目基于 MIT 许可证，详情见 [LICENSE](LICENSE)。
 
-## Docker 构建与运行
-
-项目提供多阶段 Docker 构建，运行镜像体积精简。
-
-### 1. 构建镜像
-
-```powershell
-docker build -t rustsynccv-server:latest .
-```
-
-### 2. 运行容器
-
-```powershell
-# 默认使用镜像内置 config.toml / users.toml
-docker run --rm -p 8080:8080 rustsynccv-server:latest
-
-# 挂载本地配置（推荐）
-docker run --rm -p 8080:8080 `
-    -v ${PWD}/config.toml:/app/config.toml `
-    -v ${PWD}/users.toml:/app/users.toml `
-    rustsynccv-server:latest
-```
-
-### 3. 推送到镜像仓库（Docker Hub 示例）
-
-```powershell
-$env:IMAGE_NAME="yourname/rustsynccv-server"
-docker tag rustsynccv-server:latest $env:IMAGE_NAME:latest
-docker login
-docker push $env:IMAGE_NAME:latest
-```
-
-### 4. 多架构构建 (amd64 + arm64)
-
-```powershell
-docker buildx create --use --name multi || docker buildx use multi
-docker buildx build --platform linux/amd64,linux/arm64 `
-    -t yourname/rustsynccv-server:latest `
-    --push .
-```
-
-### 5. 使用自定义证书启用 WSS
+### 使用自定义证书启用 WSS
 
 假设你有 `certs/server.pem` 与 `certs/server.key`，并在 `config.toml` 中配置：
 
