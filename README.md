@@ -105,43 +105,6 @@ tls_cert = "certs/server.pem"
 tls_key = "certs/server.key"
 ```
 
-运行时挂载：
-
-```powershell
-docker run --rm -p 8080:8080 `
-    -v ${PWD}/config.toml:/app/config.toml `
-    -v ${PWD}/users.toml:/app/users.toml `
-    -v ${PWD}/certs:/app/certs `
-    rustsynccv-server:latest
-```
-
-### 6. 调整日志级别
-
-```powershell
-docker run --rm -e RUST_LOG=debug -p 8080:8080 rustsynccv-server:latest
-```
-
-### 7. 常见问题
-
-- 用户列表更新：更新 `users.toml` 后重启容器即可，无需重建镜像。
-- config 修改：修改端口或证书路径后需同步更新容器挂载。
-- 无证书运行：若证书文件不存在，自动回退到 HTTP/WS。
-- 健康检查：可添加 `--health-cmd` 自定义 HTTP/TCP 探测。
-
-### 8. 配置与数据持久化示例
-
-#### 主机路径挂载
-
-```powershell
-# 假设当前目录包含 config.toml 与 users.toml
-docker run --name rustsynccv `
-    -p 8080:8080 `
-    -v ${PWD}/config.toml:/app/config.toml `
-    -v ${PWD}/users.toml:/app/users.toml `
-    -v ${PWD}/certs:/app/certs `
-    rustsynccv-server:latest
-```
-
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Dr1mH4X/RustSyncCV-Client,Dr1mH4X/RustSyncCV-Server&type=Date)](https://www.star-history.com/#Dr1mH4X/RustSyncCV-Client&Dr1mH4X/RustSyncCV-Server&Date)
