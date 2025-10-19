@@ -1,28 +1,54 @@
-use futures_util::{StreamExt, SinkExt};
-use std::sync::Arc;
-use axum::{extract::ws::{WebSocket, WebSocketUpgrade, Message}, extract::State, routing::get, Router};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
+use axum::{
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+    Json, Router,
+};
 use config::{Config, File};
-use serde::Deserialize;
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tracing_subscriber;
 
 #[derive(Debug, Deserialize)]
 struct Settings {
     address: String,
     port: u16,
-    tls_cert: String,
-    tls_key: String,
 }
 
 mod auth;
 mod connection;
-mod state;
 mod protocol;
+mod state;
 
-use auth::{UserDB, verify_user, create_jwt};
+use auth::{create_jwt, verify_user, UserDB};
 use connection::{ConnectionMap, ConnectionMapExt};
-use state::StateMap;
-use protocol::{AuthRequest, AuthResponse, ClipboardUpdate};
+use protocol::{AuthRequest, AuthResponse, ClipboardUpdate, ClipboardUpdatePayload};
+use state::{StateMap, StateMapExt}; // Import the extension trait
+
+// --- 新增用于 HTTP API 的请求/响应结构体 ---
+
+#[derive(Deserialize)]
+struct ClipboardGetRequest {
+    username: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct ClipboardSetRequest {
+    username: String,
+    password: String,
+    payload: ClipboardUpdatePayload, // Corrected from ClipboardPayload
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+}
+
+// -----------------------------------------
 
 #[tokio::main]
 async fn main() {
@@ -53,41 +79,18 @@ async fn main() {
     // 构建 axum 路由
     let app: Router<()> = Router::new()
         .route("/ws", get(ws_handler))
+        // --- 为快捷指令等客户端新增的 HTTP API ---
+        .route("/api/login", post(http_login_handler))
+        .route("/api/clipboard/get", post(http_get_clipboard_handler))
+        .route("/api/clipboard/set", post(http_set_clipboard_handler))
+        // -----------------------------------------
         .with_state(app_state.clone());
 
-    // TLS配置（如果证书加载失败或不存在，则回退到HTTP），并输出详细日志
+    // 启动HTTP服务器
     let addr = format!("{}:{}", settings.address, settings.port);
-    let cert_path = settings.tls_cert.clone();
-    let key_path = settings.tls_key.clone();
-    let cert_exists = std::path::Path::new(&cert_path).exists();
-    let key_exists = std::path::Path::new(&key_path).exists();
+    tracing::info!("Starting HTTP server on {}", addr);
 
-    if cert_exists && key_exists {
-        tracing::info!(cert = %cert_path, key = %key_path, "TLS: trying to load cert and key");
-        match axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path).await {
-            Ok(tls_config) => {
-                tracing::info!("TLS enabled on {}", addr);
-                axum_server::bind_rustls(addr.parse().unwrap(), tls_config)
-                    .serve(app.into_make_service())
-                    .await
-                    .unwrap();
-                return;
-            }
-            Err(e) => {
-                tracing::error!(error = %e, cert = %cert_path, key = %key_path, "TLS load failed; falling back to HTTP");
-            }
-        }
-    } else {
-        if !cert_exists {
-            tracing::warn!(cert = %cert_path, "TLS certificate file not found");
-        }
-        if !key_exists {
-            tracing::warn!(key = %key_path, "TLS private key file not found");
-        }
-        tracing::warn!("TLS certificates not found, starting HTTP server on {}", addr);
-    }
-
-    axum_server::bind(addr.parse().unwrap())
+    axum::Server::bind(&addr.parse().unwrap())
         .serve(app.into_make_service())
         .await
         .unwrap();
@@ -100,10 +103,86 @@ struct AppState {
     jwt_secret: String,
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
+// --- 新增的 HTTP API 处理器 ---
+
+/// HTTP 登录处理器 (返回 JWT, 供高级客户端使用)
+async fn http_login_handler(
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+    Json(payload): Json<AuthRequest>,
+) -> Response {
+    if verify_user(&state.user_db, &payload.username, &payload.password) {
+        let token = create_jwt(&payload.username, 3600, &state.jwt_secret).unwrap();
+        let response = AuthResponse {
+            success: true,
+            message: "Authentication successful".to_string(),
+            token: Some(token),
+        };
+        (StatusCode::OK, Json(response)).into_response()
+    } else {
+        let error_response = ErrorResponse {
+            error: "Invalid username or password".to_string(),
+        };
+        (StatusCode::UNAUTHORIZED, Json(error_response)).into_response()
+    }
+}
+
+/// HTTP 获取剪贴板处理器 (为快捷指令设计)
+async fn http_get_clipboard_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ClipboardGetRequest>,
+) -> Response {
+    // 每次都验证用户名和密码
+    if !verify_user(&state.user_db, &payload.username, &payload.password) {
+        let error_response = ErrorResponse {
+            error: "Invalid username or password".to_string(),
+        };
+        return (StatusCode::UNAUTHORIZED, Json(error_response)).into_response();
+    }
+
+    if let Some(clipboard) = state.state_map.get_state(&payload.username).await {
+        (StatusCode::OK, Json(clipboard)).into_response()
+    } else {
+        let error_response = ErrorResponse {
+            error: "No clipboard data found for user".to_string(),
+        };
+        (StatusCode::NOT_FOUND, Json(error_response)).into_response()
+    }
+}
+
+/// HTTP 发送剪贴板处理器 (为快捷指令设计)
+async fn http_set_clipboard_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ClipboardSetRequest>,
+) -> Response {
+    // 每次都验证用户名和密码
+    if !verify_user(&state.user_db, &payload.username, &payload.password) {
+        let error_response = ErrorResponse {
+            error: "Invalid username or password".to_string(),
+        };
+        return (StatusCode::UNAUTHORIZED, Json(error_response)).into_response();
+    }
+
+    // 构造一个 `ClipboardUpdate` 用于广播和状态更新
+    let update = ClipboardUpdate {
+        r#type: "clipboard_update".to_string(),
+        payload: payload.payload,
+    };
+
+    // 广播给此用户的其他 WebSocket 连接并更新状态
+    crate::protocol::dispatcher::dispatch_clipboard_update(
+        &payload.username,
+        update,
+        &state.connections,
+        &state.state_map,
+    )
+    .await;
+
+    (StatusCode::OK).into_response()
+}
+
+// --- WebSocket 处理器 (保持不变) ---
+
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -115,8 +194,14 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
         Some(Ok(Message::Text(t))) => t,
         Some(Ok(other)) => {
             tracing::warn!("first message not text: {:?}", other);
-            let resp = AuthResponse { success: false, message: "expected text auth message".to_string(), token: None };
-            let _ = socket.send(Message::Text(serde_json::to_string(&resp).unwrap())).await;
+            let resp = AuthResponse {
+                success: false,
+                message: "expected text auth message".to_string(),
+                token: None,
+            };
+            let _ = socket
+                .send(Message::Text(serde_json::to_string(&resp).unwrap()))
+                .await;
             return;
         }
         Some(Err(e)) => {
@@ -135,8 +220,14 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
         Ok(req) => req,
         Err(e) => {
             tracing::warn!("failed to parse auth json: {}", e);
-            let resp = AuthResponse { success: false, message: format!("invalid auth json: {}", e), token: None };
-            let _ = socket.send(Message::Text(serde_json::to_string(&resp).unwrap())).await;
+            let resp = AuthResponse {
+                success: false,
+                message: format!("invalid auth json: {}", e),
+                token: None,
+            };
+            let _ = socket
+                .send(Message::Text(serde_json::to_string(&resp).unwrap()))
+                .await;
             return;
         }
     };
@@ -144,19 +235,34 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     // 校验用户名密码
     if !verify_user(&state.user_db, &auth_req.username, &auth_req.password) {
         tracing::warn!("auth failed for user {}", auth_req.username);
-        let resp = AuthResponse { success: false, message: "Auth failed".to_string(), token: None };
-        let _ = socket.send(Message::Text(serde_json::to_string(&resp).unwrap())).await;
+        let resp = AuthResponse {
+            success: false,
+            message: "Auth failed".to_string(),
+            token: None,
+        };
+        let _ = socket
+            .send(Message::Text(serde_json::to_string(&resp).unwrap()))
+            .await;
         return;
     }
     tracing::info!("auth successful for user {}", auth_req.username);
     // 认证成功，生成JWT
     let token = create_jwt(&auth_req.username, 3600, &state.jwt_secret).unwrap();
-    let resp = AuthResponse { success: true, message: "Authentication successful".to_string(), token: Some(token.clone()) };
-    let _ = socket.send(Message::Text(serde_json::to_string(&resp).unwrap())).await;
+    let resp = AuthResponse {
+        success: true,
+        message: "Authentication successful".to_string(),
+        token: Some(token.clone()),
+    };
+    let _ = socket
+        .send(Message::Text(serde_json::to_string(&resp).unwrap()))
+        .await;
 
     // 创建 channel 用于广播
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    state.connections.register(&auth_req.username, &auth_req.username, tx).await;
+    state
+        .connections
+        .register(&auth_req.username, &auth_req.username, tx)
+        .await;
 
     // 拆分 socket 为 sender/receiver
     let (mut sender, mut receiver) = socket.split();
@@ -192,13 +298,19 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                             format!("{} (len={})", content_type, len)
                         };
 
-                        tracing::info!("clipboard update from {}: type={} preview={}", username, content_type, preview);
+                        tracing::info!(
+                            "clipboard update from {}: type={} preview={}",
+                            username,
+                            content_type,
+                            preview
+                        );
                         crate::protocol::dispatcher::dispatch_clipboard_update(
                             &username,
                             update,
                             &connections,
-                            &state_map
-                        ).await;
+                            &state_map,
+                        )
+                        .await;
                     }
                     Err(e) => {
                         tracing::warn!("failed to parse clipboard update: {}", e);
